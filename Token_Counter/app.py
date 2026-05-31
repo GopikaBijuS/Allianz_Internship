@@ -12,7 +12,12 @@ try:
     print("Tokens: ",tokens)
 
     token_count=len(tokens)
+
+    cost_per_1000_tokens=0.002
+    estimated_cost=(token_count/1000)*cost_per_1000_tokens
+
     print("Token Count: ",token_count)
+    print(f"Estimated Cost: ${estimated_cost:.6f}")
 
 except FileNotFoundError:
     print("File not found")
