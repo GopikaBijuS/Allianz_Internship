@@ -1,28 +1,38 @@
-import tiktoken
+from fastapi import FastAPI
+from pydantic import BaseModel
 
-Model_pricing = {
-    "gpt-4o": 0.005,
-    "gpt-4o-mini": 0.00015,
-    "gpt-3.5-turbo": 0.002
-}
+from token_counter import token_cost_estimator
+from database import get_history
+from database import save_analysis
+from database import init_db
 
-def token_counter(text,model):
+init_db()
+app = FastAPI()
 
-    if model not in Model_pricing:
-        print(f"Model '{model}' not found. Please choose from: {','.join(Model_pricing.keys())}")
-        return
+class TokenCount(BaseModel):
+    text: str
+    model: str
 
-    encoding = tiktoken.encoding_for_model(model)
+@app.post("/token_count/")
+def count_tokens(request: TokenCount):
+    text = request.text
+    model = request.model
 
-    tokens = encoding.encode(text)
-    token_count = len(tokens)
+    result = token_cost_estimator(text, model)
 
-    cost_per_1000_tokens = Model_pricing.get(model)
+    if result:
+        save_analysis(text,result['model'],result['token_count'],result['estimated_cost'])
+        return {
+            "model": result['model'],
+            "token_count": result['token_count'],
+            "estimated_cost": result['estimated_cost']
+        }
+    else:
+        return {"error": "Invalid model specified."}
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Token Counter API! Use the /token_count/ endpoint to estimate token counts and costs."}
 
-    estimated_cost = (token_count / 1000) * cost_per_1000_tokens
-
-    return {
-        "model": model,
-        "token_count": token_count,
-        "estimated_cost": round(estimated_cost,6)
-    }
+@app.get("/history")
+def history():
+    return get_history()
