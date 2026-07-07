@@ -1,8 +1,10 @@
 import sqlite3
-
 import os
+import json
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
 
 DB_NAME = os.path.join(
     BASE_DIR,
@@ -10,15 +12,19 @@ DB_NAME = os.path.join(
 )
 
 
+def get_connection():
+    return sqlite3.connect(DB_NAME)
+
+
 def init_db():
-
-    conn = sqlite3.connect(DB_NAME)
-
+    conn = get_connection()
     cursor = conn.cursor()
 
+    # Existing chat history table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS llm_history(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
             prompt TEXT NOT NULL,
             response TEXT NOT NULL,
             model TEXT NOT NULL,
@@ -34,18 +40,47 @@ def init_db():
         )
     """)
 
+    # Agent execution logs
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_logs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            prompt TEXT,
+            response TEXT,
+            model TEXT,
+            tools TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
 
-def save_chat(prompt,response,model,temperature,top_p,top_k,max_tokens,input_tokens,output_tokens,elapsed_time,cost):
+# ---------------------------------------------------
+# CHAT HISTORY
+# ---------------------------------------------------
 
-    conn = sqlite3.connect(DB_NAME)
-
+def save_chat(
+        session_id,
+        prompt,
+        response,
+        model,
+        temperature,
+        top_p,
+        top_k,
+        max_tokens,
+        input_tokens,
+        output_tokens,
+        elapsed_time,
+        cost
+):
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
         INSERT INTO llm_history(
+            session_id,
             prompt,
             response,
             model,
@@ -58,9 +93,10 @@ def save_chat(prompt,response,model,temperature,top_p,top_k,max_tokens,input_tok
             elapsed_time,
             cost
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
     (
+        session_id,
         prompt,
         response,
         model,
@@ -79,9 +115,7 @@ def save_chat(prompt,response,model,temperature,top_p,top_k,max_tokens,input_tok
 
 
 def get_history():
-
-    conn = sqlite3.connect(DB_NAME)
-
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -93,14 +127,28 @@ def get_history():
     rows = cursor.fetchall()
 
     conn.close()
+    return rows
 
+
+def get_session_history(session_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM llm_history
+        WHERE session_id = ?
+        ORDER BY id ASC
+    """, (session_id,))
+
+    rows = cursor.fetchall()
+
+    conn.close()
     return rows
 
 
 def delete_chat(chat_id):
-
-    conn = sqlite3.connect(DB_NAME)
-
+    conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -111,15 +159,128 @@ def delete_chat(chat_id):
     conn.commit()
     conn.close()
 
-def update_chat(chat_id, prompt, response, model, temperature, top_p, top_k, max_tokens, input_tokens, output_tokens, elapsed_time, cost):
-    conn=sqlite3.connect(DB_NAME)
-    cursor=conn.cursor()
+
+def delete_session(session_id):
+    conn = get_connection()
+    cursor = conn.cursor()
 
     cursor.execute("""
-        UPDATE llm_history
-        SET prompt = ?, response = ?, model = ?, temperature = ?, top_p = ?, top_k = ?, max_tokens = ?, input_tokens = ?, output_tokens = ?, elapsed_time = ?, cost = ?
-        WHERE id = ? """,
-        (prompt, response, model, temperature, top_p, top_k, max_tokens, input_tokens, output_tokens, elapsed_time, cost, chat_id))
+        DELETE FROM llm_history
+        WHERE session_id = ?
+    """, (session_id,))
+
+    cursor.execute("""
+        DELETE FROM agent_logs
+        WHERE session_id = ?
+    """, (session_id,))
 
     conn.commit()
     conn.close()
+
+
+def update_chat(
+        chat_id,
+        session_id,
+        prompt,
+        response,
+        model,
+        temperature,
+        top_p,
+        top_k,
+        max_tokens,
+        input_tokens,
+        output_tokens,
+        elapsed_time,
+        cost
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE llm_history
+        SET
+            session_id = ?,
+            prompt = ?,
+            response = ?,
+            model = ?,
+            temperature = ?,
+            top_p = ?,
+            top_k = ?,
+            max_tokens = ?,
+            input_tokens = ?,
+            output_tokens = ?,
+            elapsed_time = ?,
+            cost = ?
+        WHERE id = ?
+    """,
+    (
+        session_id,
+        prompt,
+        response,
+        model,
+        temperature,
+        top_p,
+        top_k,
+        max_tokens,
+        input_tokens,
+        output_tokens,
+        elapsed_time,
+        cost,
+        chat_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------
+# AGENT LOGS
+# ---------------------------------------------------
+
+def save_agent_log(
+        session_id,
+        prompt,
+        response,
+        model,
+        tools
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO agent_logs(
+            session_id,
+            prompt,
+            response,
+            model,
+            tools
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """,
+    (
+        session_id,
+        prompt,
+        response,
+        model,
+        json.dumps(tools)
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def get_agent_logs(session_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM agent_logs
+        WHERE session_id = ?
+        ORDER BY id DESC
+    """, (session_id,))
+
+    rows = cursor.fetchall()
+
+    conn.close()
+    return rows

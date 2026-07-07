@@ -1,268 +1,359 @@
 import streamlit as st
 import requests
+import uuid
 
-Api_URL = "http://localhost:8000"
+API_URL = "http://localhost:8000"
 
-st.set_page_config(page_title="Local LLM Analyzer",layout="wide")
+st.set_page_config(
+    page_title="Research Assistant Agent",
+    layout="wide"
+)
 
-# -----------------------------------------
+# ---------------------------------------------------
 # SESSION STATE
-# -----------------------------------------
+# ---------------------------------------------------
 
-if "selected_chat" not in st.session_state:
-    st.session_state.selected_chat = None
-
-if "edit_mode" not in st.session_state:
-    st.session_state.edit_mode = False
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(
+        uuid.uuid4()
+    )
 
 if "generated_result" not in st.session_state:
     st.session_state.generated_result = None
 
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# -----------------------------------------
-# REUSABLE UI
-# -----------------------------------------
-
-def show_metrics(input_tokens,output_tokens,elapsed_time,cost):
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Input Tokens",input_tokens)
-        st.metric("Output Tokens",output_tokens)
-
-    with col2:
-        st.metric("Elapsed Time",elapsed_time)
-        st.metric("Inference Cost",cost)
-
-
-def show_response_card(result):
-
-    st.subheader("Response")
-
-    st.info(
-        f"Prompt Type: {result['prompt_type'].title()}"
-    )
-
-    st.info(
-        f"Model Used: {result['model']}"
-    )
-
-    st.write(result["response"])
-
-    show_metrics(
-        result["input_tokens"],
-        result["output_tokens"],
-        result["elapsed_time"],
-        result["cost"]
-    )
-
-# -----------------------------------------
+# ---------------------------------------------------
 # SIDEBAR
-# -----------------------------------------
+# ---------------------------------------------------
 
-st.sidebar.title("History")
+st.sidebar.title("Research Agent")
+
+st.sidebar.info(
+    f"Session:\n{st.session_state.session_id[:12]}"
+)
+
+if st.sidebar.button(
+        "New Conversation"
+):
+    try:
+        requests.delete(
+            f"{API_URL}/session/"
+            f"{st.session_state.session_id}"
+        )
+    except:
+        pass
+
+    st.session_state.session_id = str(
+        uuid.uuid4()
+    )
+
+    st.session_state.generated_result = None
+    st.session_state.chat_history = []
+
+    st.rerun()
+
+st.sidebar.divider()
 
 try:
-    history_response = requests.get(f"{Api_URL}/history")
-    history = history_response.json()
+    response = requests.get(
+        f"{API_URL}/history/"
+        f"{st.session_state.session_id}"
+    )
 
-except Exception:
+    history = response.json()
+
+except:
     history = []
 
-for item in history:
-    chat_id = item[0]
-    prompt = item[1]
+st.sidebar.subheader("Session History")
+
+for item in reversed(history):
+
+    prompt = item[2]
+
     title = (
-        prompt[:25] + "..." if len(prompt) > 25
+        prompt[:30] + "..."
+        if len(prompt) > 30
         else prompt
     )
 
-    if st.sidebar.button(title,key=f"history_{chat_id}"):
-        st.session_state.selected_chat = item
-        st.session_state.edit_mode = False
-        st.rerun()
+    st.sidebar.write(f"• {title}")
 
-# -----------------------------------------
+# ---------------------------------------------------
 # MAIN PAGE
-# -----------------------------------------
+# ---------------------------------------------------
 
-st.title("Local LLM Analyzer")
-selected = st.session_state.selected_chat
+st.title(
+    "Research Assistant Agent"
+)
 
-# -----------------------------------------
-# NEW PROMPT PAGE
-# -----------------------------------------
+st.caption(
+    "LangChain + Ollama + Tool Calling"
+)
 
-if selected is None:
-    st.subheader("Generate Response")
-    prompt = st.text_area("Prompt",height=200)
-    
-    temperature = st.slider(
-        "Temperature",
-        0.0,
-        1.5,
-        0.7,
-        0.1
-    )
+# ---------------------------------------------------
+# CHAT HISTORY
+# ---------------------------------------------------
 
-    top_p = st.slider(
-        "Top P",
-        0.1,
-        1.0,
-        0.9,
-        0.05
-    )
-    top_k = st.slider(
-        "Top K",
-        10,
-        100,
-        40,
-        1
-    )
+for chat in st.session_state.chat_history:
 
-    max_tokens = st.slider(
-        "Max Tokens",
-        50,
-        1000,
-        200,
-        50
-    )
+    with st.chat_message(
+            chat["role"]
+    ):
+        st.markdown(
+            chat["content"]
+        )
 
-    if st.button("Generate"):
-        payload = {
-            "prompt": prompt,
-            "temperature": temperature,
-            "top_p": top_p,
-            "top_k": top_k,
-            "max_tokens": max_tokens
+# ---------------------------------------------------
+# USER INPUT
+# ---------------------------------------------------
+
+prompt = st.chat_input(
+    "Ask something..."
+)
+
+if prompt:
+
+    st.session_state.chat_history.append(
+        {
+            "role": "user",
+            "content": prompt
         }
+    )
+
+    with st.chat_message(
+            "user"
+    ):
+        st.markdown(prompt)
+
+    payload = {
+        "session_id":
+            st.session_state.session_id,
+        "prompt":
+            prompt,
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "top_k": 40,
+        "max_tokens": 500
+    }
+
+    with st.spinner(
+            "Thinking..."
+    ):
 
         try:
-            response = requests.post(f"{Api_URL}/generate", json=payload)
+            response = requests.post(
+                f"{API_URL}/generate",
+                json=payload
+            )
+
             if response.status_code == 200:
+
                 result = response.json()
+
+                answer = result[
+                    "response"
+                ]
+
                 st.session_state.generated_result = result
+
+                st.session_state.chat_history.append(
+                    {
+                        "role":
+                            "assistant",
+                        "content":
+                            answer
+                    }
+                )
+
+                with st.chat_message(
+                        "assistant"
+                ):
+                    st.markdown(
+                        answer
+                    )
+
+                    st.divider()
+
+                    col1, col2 = st.columns(
+                        2
+                    )
+
+                    with col1:
+                        st.metric(
+                            "Input Tokens",
+                            result[
+                                "input_tokens"
+                            ]
+                        )
+
+                        st.metric(
+                            "Output Tokens",
+                            result[
+                                "output_tokens"
+                            ]
+                        )
+
+                    with col2:
+                        st.metric(
+                            "Latency",
+                            result[
+                                "elapsed_time"
+                            ]
+                        )
+
+                        st.metric(
+                            "Model",
+                            result[
+                                "model"
+                            ]
+                        )
+
+                    st.metric(
+                        "Prompt Type",
+                        result[
+                            "prompt_type"
+                        ]
+                    )
+
+                    # -------------------
+                    # Agent Trace
+                    # -------------------
+
+                    if result.get(
+                            "agent_trace"
+                    ):
+
+                        with st.expander(
+                                "Agent Trace"
+                        ):
+
+                            for step in result[
+                                "agent_trace"
+                            ]:
+                                st.code(
+                                    str(step)
+                                )
+
             else:
-                error_detail = response.text
-                st.error(f"Generation Failed: {error_detail}")
-        except requests.RequestException as exc:
-            st.error(f"Request Failed: {exc}")
+                st.error(
+                    response.text
+                )
 
-    if st.session_state.generated_result:
-        show_response_card(
-            st.session_state.generated_result)
+        except Exception as exc:
+            st.error(
+                str(exc)
+            )
 
-# -----------------------------------------
-# HISTORY DETAILS
-# -----------------------------------------
+# ---------------------------------------------------
+# METRICS DASHBOARD
+# ---------------------------------------------------
 
-else:
-    chat_id = selected[0]
-    prompt = selected[1]
-    response_text = selected[2]
-    model = selected[3]
-    temperature = selected[4]
-    top_p = selected[5]
-    top_k = selected[6]
-    max_tokens = selected[7]
-    input_tokens = selected[8]
-    output_tokens = selected[9]
-    elapsed_time = selected[10]
-    cost = selected[11]
+st.divider()
 
-    # -----------------------------------------
-    # EDIT MODE
-    # -----------------------------------------
+st.subheader(
+    "Session Metrics"
+)
 
-    if st.session_state.edit_mode:
+try:
 
-        st.subheader("Edit Prompt")
-        updated_prompt = st.text_area("Prompt",value=prompt,height=200)
-        updated_temperature = st.slider("Temperature", 0.0, 1.5, temperature, 0.1)
-        updated_top_p = st.slider("Top P", 0.1, 1.0, top_p, 0.05)
-        updated_top_k = st.slider("Top K", 10, 100, top_k, 1)
-        updated_max_tokens = st.slider("Max Tokens", 50, 1000, max_tokens, 50)
+    history_response = requests.get(
+        f"{API_URL}/history/"
+        f"{st.session_state.session_id}"
+    )
 
+    session_history = (
+        history_response.json()
+    )
 
-        if st.button("Update"):
+    total_input = sum(
+        row[9]
+        for row in session_history
+    )
 
-            payload = {
-                "prompt": updated_prompt,
-                "temperature": updated_temperature,
-                "top_p": updated_top_p,
-                "top_k": updated_top_k,
-                "max_tokens": updated_max_tokens
-            }
-            try:
-                response = requests.put(f"{Api_URL}/history/{chat_id}", json=payload)
-                if response.status_code == 200:
-                    result = response.json()
-                    st.session_state.generated_result = result
-                    st.success("Updated Successfully")
-                else:
-                    error_detail = response.text
-                    st.error(f"Update Failed: {error_detail}")
-            except requests.RequestException as exc:
-                st.error(f"Request Failed: {exc}")
+    total_output = sum(
+        row[10]
+        for row in session_history
+    )
 
-        if st.session_state.generated_result:
+    total_latency = round(
+        sum(
+            row[11]
+            for row in session_history
+        ),
+        2
+    )
 
-            st.divider()
-            show_response_card(st.session_state.generated_result)
-        col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(
+        3
+    )
 
-        with col1:
-            if st.button("Save Changes"):
-                st.session_state.edit_mode = False
-                st.session_state.selected_chat = None
-                st.session_state.generated_result = None
-                st.rerun()
+    with col1:
+        st.metric(
+            "Total Input Tokens",
+            total_input
+        )
 
-        with col2:
-            if st.button("Cancel"):
-                st.session_state.edit_mode = False
-                st.session_state.generated_result = None
-                st.rerun()
+    with col2:
+        st.metric(
+            "Total Output Tokens",
+            total_output
+        )
 
-    # -----------------------------------------
-    # VIEW MODE
-    # -----------------------------------------
+    with col3:
+        st.metric(
+            "Total Latency",
+            total_latency
+        )
 
-    else:
-        st.subheader("Prompt")
-        st.info(prompt)
-        st.subheader("Response")
-        st.write(response_text)
-        st.divider()
-        show_metrics(input_tokens,output_tokens,elapsed_time,cost)
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("temperature",temperature)
-        with col2:
-            st.metric("top_p",top_p)
-            pass
-        with col3:
-            st.metric("top_k",top_k)
-        with col4:
-            st.metric("max_tokens",max_tokens)
+except:
+    pass
 
-        st.divider()
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.button(model,disabled=True)
+# ---------------------------------------------------
+# AGENT LOGS
+# ---------------------------------------------------
 
-        with col2:
-            if st.button("Edit"):
-                st.session_state.edit_mode = True
-                st.rerun()
+st.divider()
 
-        with col3:
-            if st.button("Delete"):
-                requests.delete(f"{Api_URL}/history/{chat_id}")
-                st.session_state.selected_chat = None
-                st.rerun()
+if st.button(
+        "Show Agent Logs"
+):
+    try:
 
-        if st.button("New Prompt"):
-            st.session_state.selected_chat = None
-            st.session_state.generated_result = None
-            st.rerun()
+        logs = requests.get(
+            f"{API_URL}/agent_logs/"
+            f"{st.session_state.session_id}"
+        ).json()
+
+        for log in logs:
+
+            with st.expander(
+                    f"Prompt: {log[2][:50]}"
+            ):
+
+                st.write(
+                    f"Model: {log[4]}"
+                )
+
+                st.write(
+                    "Tools Used:"
+                )
+
+                st.code(
+                    log[5]
+                )
+
+                st.write(
+                    "Response:"
+                )
+
+                st.write(
+                    log[3]
+                )
+
+    except:
+        st.warning(
+            "No logs found."
+        )
